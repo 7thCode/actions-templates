@@ -1,0 +1,129 @@
+name: Wails Multiplatform Release (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      go_version_file:
+        description: 'Path (relative to repo root) to the go.mod that pins the Go toolchain version'
+        type: string
+        default: 'go.mod'
+      wails_dir:
+        description: 'Directory containing wails.json (relative to repo root)'
+        type: string
+        default: '.'
+      app_name:
+        description: 'outputfilename from wails.json — used to locate build/bin/<app_name> and to name the zipped release assets'
+        type: string
+        required: true
+      wails_cli_version:
+        description: 'Version of the wails CLI to install (must match the wails library version in go.mod), e.g. v2.12.0'
+        type: string
+        default: 'latest'
+      upload_to_release_tag:
+        description: 'Existing release tag to backfill assets onto (workflow_dispatch only)'
+        type: string
+        default: ''
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            wails_platform: darwin/universal
+            asset_name: '${{ inputs.app_name }}_darwin_universal.zip'
+          - os: windows-latest
+            wails_platform: windows/amd64
+            asset_name: '${{ inputs.app_name }}_windows_amd64.zip'
+          - os: ubuntu-latest
+            wails_platform: linux/amd64
+            asset_name: '${{ inputs.app_name }}_linux_amd64.zip'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails CLI
+        shell: bash
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ inputs.wails_cli_version }}
+
+      - name: Build
+        shell: bash
+        working-directory: ${{ inputs.wails_dir }}
+        run: |
+          extra_tags=""
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            extra_tags="-tags webkit2_41"
+          fi
+          wails build -clean -platform ${{ matrix.wails_platform }} $extra_tags
+
+      - name: Package
+        id: package
+        shell: bash
+        working-directory: ${{ inputs.wails_dir }}/build/bin
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            macOS)
+              zip -r -y "${{ matrix.asset_name }}" "${{ inputs.app_name }}.app"
+              ;;
+            Windows)
+              7z a "${{ matrix.asset_name }}" "${{ inputs.app_name }}.exe"
+              ;;
+            Linux)
+              zip "${{ matrix.asset_name }}" "${{ inputs.app_name }}"
+              ;;
+          esac
+          echo "path=${{ inputs.wails_dir }}/build/bin/${{ matrix.asset_name }}" >> "$GITHUB_OUTPUT"
+
+      # Tag pushes (v*) publish the packaged asset directly to a GitHub Release matching the tag.
+      - name: Publish to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" --title "$tag" --generate-notes --repo "${{ github.repository }}" || true
+          gh release upload "$tag" "${{ steps.package.outputs.path }}" --clobber --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      # Manual runs (workflow_dispatch) only upload as a workflow artifact, so the build can be
+      # verified without touching any GitHub Release.
+      - name: Upload build artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.os }}
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+
+      # Optional: attach this run's asset to an already-existing release (identified by tag)
+      # without cutting a new version. Runs entirely on GitHub's infra, so it's the way to
+      # backfill an asset onto a release when the operator's local connection is too slow/
+      # unreliable to round-trip large build artifacts through their own machine.
+      - name: Upload to existing release
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && inputs.upload_to_release_tag != '' }}
+        shell: bash
+        run: |
+          gh release upload "${{ inputs.upload_to_release_tag }}" "${{ steps.package.outputs.path }}" --clobber --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
