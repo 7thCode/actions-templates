@@ -94,9 +94,13 @@ jobs:
           esac
           echo "path=${{ inputs.wails_dir }}/build/bin/${{ matrix.asset_name }}" >> "$GITHUB_OUTPUT"
 
-      # Tag pushes (v*) publish the packaged asset directly to a GitHub Release matching the tag.
+      # Any tag push publishes the packaged asset directly to a GitHub Release matching the tag.
+      # The caller's own `on.push.tags` filter decides which tag patterns reach this workflow at
+      # all (e.g. `app-v*` to keep a desktop app's release cadence separate from a Go library's
+      # own bare vX.Y.Z module tags), so this only needs to distinguish tag pushes from other
+      # triggers (workflow_dispatch) — it intentionally does not assume any particular prefix.
       - name: Publish to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           set -euo pipefail
@@ -109,7 +113,7 @@ jobs:
       # Manual runs (workflow_dispatch) only upload as a workflow artifact, so the build can be
       # verified without touching any GitHub Release.
       - name: Upload build artifact
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.os }}
@@ -121,7 +125,7 @@ jobs:
       # backfill an asset onto a release when the operator's local connection is too slow/
       # unreliable to round-trip large build artifacts through their own machine.
       - name: Upload to existing release
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && inputs.upload_to_release_tag != '' }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.upload_to_release_tag != '' }}
         shell: bash
         run: |
           gh release upload "${{ inputs.upload_to_release_tag }}" "${{ steps.package.outputs.path }}" --clobber --repo "${{ github.repository }}"
