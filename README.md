@@ -60,7 +60,7 @@ Builds a Tauri 2 app on macOS (universal `.dmg`), Windows (NSIS `.exe`) and Linu
 - on `workflow_dispatch`, uploads workflow artifacts instead, optionally backfilling an
   existing release via `upload_to_release_tag`
 
-Expects an npm project whose `tauri` script runs the Tauri CLI (`npm run tauri build`).
+Expects an npm project whose `tauri` script runs the Tauri CLI (invoked as `npm run tauri -- build`).
 
 ```yaml
 jobs:
