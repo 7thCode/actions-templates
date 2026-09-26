@@ -50,3 +50,26 @@ All inputs (`node_version`, `package_manager`, `build_command`, `artifact_globs`
 
 Pin `@main` to a tag (e.g. `@v1`) once this repo has releases, if a consuming
 project needs to freeze the workflow version.
+
+### `tauri-multiplatform-release.yml`
+
+Builds a Tauri 2 app on macOS (universal `.dmg`), Windows (NSIS `.exe`) and Linux
+(`.AppImage` and `.deb`), and:
+
+- on a tag push, creates the GitHub Release for the tag (if missing) and uploads the installers
+- on `workflow_dispatch`, uploads workflow artifacts instead, optionally backfilling an
+  existing release via `upload_to_release_tag`
+
+Expects an npm project whose `tauri` script runs the Tauri CLI (`npm run tauri build`).
+
+```yaml
+jobs:
+  build:
+    uses: 7thCode/actions-templates/.github/workflows/tauri-multiplatform-release.yml@main
+    with:
+      upload_to_release_tag: ${{ inputs.upload_to_release }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Optional inputs: `node_version`, `package_manager`, `tauri_dir`, `build_command`.

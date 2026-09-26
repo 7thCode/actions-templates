@@ -1,0 +1,146 @@
+name: Tauri Multiplatform Release (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: 'Node.js version to use'
+        type: string
+        default: '22'
+      package_manager:
+        description: 'Package manager (npm/yarn/pnpm) — must support "<pm> ci"'
+        type: string
+        default: 'npm'
+      tauri_dir:
+        description: 'Directory containing the Tauri Rust project (src-tauri), relative to repo root'
+        type: string
+        default: 'src-tauri'
+      build_command:
+        description: 'Command that builds and bundles the app (the Tauri CLI target args are appended)'
+        type: string
+        default: 'npm run tauri build'
+      upload_to_release_tag:
+        description: 'Existing release tag to backfill assets onto (workflow_dispatch only)'
+        type: string
+        default: ''
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build_args: --target universal-apple-darwin
+            bundle_dir: universal-apple-darwin/release/bundle
+            bundle_globs: dmg/*.dmg
+          - os: windows-latest
+            rust_targets: ''
+            build_args: ''
+            bundle_dir: release/bundle
+            bundle_globs: nsis/*.exe
+          - os: ubuntu-latest
+            rust_targets: ''
+            build_args: ''
+            bundle_dir: release/bundle
+            bundle_globs: appimage/*.AppImage deb/*.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.tauri_dir }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libwebkit2gtk-4.1-dev \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install dependencies
+        run: ${{ inputs.package_manager }} ci
+
+      - name: Build and bundle
+        shell: bash
+        run: ${{ inputs.build_command }} ${{ matrix.build_args }}
+
+      - name: Collect installers
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${{ inputs.tauri_dir }}/target/${{ matrix.bundle_dir }}"
+          shopt -s nullglob
+          files=()
+          for pattern in ${{ matrix.bundle_globs }}; do
+            files+=("$bundle"/$pattern)
+          done
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No installers found under $bundle" >&2
+            exit 1
+          fi
+          {
+            echo "paths<<EOF"
+            printf '%s\n' "${files[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Any tag push publishes the installers directly to a GitHub Release matching the tag.
+      # The caller's own `on.push.tags` filter decides which tag patterns reach this workflow.
+      - name: Publish to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" --title "$tag" --generate-notes --repo "${{ github.repository }}" || true
+          while IFS= read -r file; do
+            gh release upload "$tag" "$file" --clobber --repo "${{ github.repository }}"
+          done <<< "${{ steps.collect.outputs.paths }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      # Manual runs (workflow_dispatch) only upload workflow artifacts, so the build can be
+      # verified without touching any GitHub Release.
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.os }}
+          path: ${{ steps.collect.outputs.paths }}
+          if-no-files-found: error
+
+      # Optional: attach this run's installers to an already-existing release (identified by tag)
+      # without cutting a new version.
+      - name: Upload to existing release
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.upload_to_release_tag != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            gh release upload "${{ inputs.upload_to_release_tag }}" "$file" --clobber --repo "${{ github.repository }}"
+          done <<< "${{ steps.collect.outputs.paths }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
