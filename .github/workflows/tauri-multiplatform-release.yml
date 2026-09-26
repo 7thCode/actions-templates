@@ -16,9 +16,9 @@ on:
         type: string
         default: 'src-tauri'
       build_command:
-        description: 'Command that builds and bundles the app (the Tauri CLI target args are appended)'
+        description: 'Command that builds and bundles the app (per-OS Tauri CLI args are appended, so pass args through npm with `--`)'
         type: string
-        default: 'npm run tauri build'
+        default: 'npm run tauri -- build'
       upload_to_release_tag:
         description: 'Existing release tag to backfill assets onto (workflow_dispatch only)'
         type: string
@@ -94,9 +94,12 @@ jobs:
           bundle="${{ inputs.tauri_dir }}/target/${{ matrix.bundle_dir }}"
           shopt -s nullglob
           files=()
-          for pattern in ${{ matrix.bundle_globs }}; do
-            files+=("$bundle"/$pattern)
+          # Expand the globs relative to the bundle dir, then prefix it back
+          pushd "$bundle" > /dev/null
+          for file in ${{ matrix.bundle_globs }}; do
+            files+=("$bundle/$file")
           done
+          popd > /dev/null
           if [ ${#files[@]} -eq 0 ]; then
             echo "No installers found under $bundle" >&2
             exit 1
