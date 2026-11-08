@@ -24,6 +24,10 @@ on:
           dist/*.AppImage
           dist/*.deb
           dist/*.snap
+      os_matrix:
+        description: 'JSON array of runner labels to build on (e.g. ["macos-latest"])'
+        type: string
+        default: '["macos-latest","windows-latest","ubuntu-latest"]'
       upload_to_release_tag:
         description: 'Existing release tag to backfill assets onto (workflow_dispatch only)'
         type: string
@@ -40,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: ${{ fromJSON(inputs.os_matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
