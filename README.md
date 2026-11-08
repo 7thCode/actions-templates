@@ -45,8 +45,11 @@ jobs:
 ```
 
 All inputs (`node_version`, `package_manager`, `build_command`, `artifact_globs`,
-`upload_to_release_tag`) are optional and default to the settings used by
+`os_matrix`, `upload_to_release_tag`) are optional and default to the settings used by
 [hugging-Loader](https://github.com/7thCode/hugging-loader).
+
+`os_matrix` is a JSON array of runner labels (default: macOS, Windows and Linux).
+Set e.g. `os_matrix: '["macos-latest"]'` for an app that only runs on one platform.
 
 Pin `@main` to a tag (e.g. `@v1`) once this repo has releases, if a consuming
 project needs to freeze the workflow version.
